@@ -17,6 +17,7 @@ class POINT_CLOUD(ct.Structure):
 
 # POINT_CLOUD READ_DATA[12000]    
 class READ_DATA(ct.Array):
+    
     _length_ = 16000
     _type_ = POINT_CLOUD
     
@@ -110,8 +111,10 @@ class Projection :
     
     def __init__(self) :
         
-        self.projectionX    = []
-        self.projectionY    = []
+        self.projectionX = []
+        self.projectionY = []
+        
+        self.cam_point   = [556, 363]
 
         
     def writeCSV(self, filename = 'PCDdata.csv') :
@@ -142,7 +145,7 @@ class Projection :
             scaleFac = pointY + camRecede
 
             worldCoor   = np.array([[pointX],[pointY],[pointZ],[1]])
-            pixelCoor   = 1/scaleFac * projectionMat @ worldCoor
+            pixelCoor   = 1/scaleFac * intMat @ extMat @ worldCoor
 
             pixelU = int(pixelCoor[0])
             pixelV = int(pixelCoor[1])
@@ -150,20 +153,31 @@ class Projection :
             if pixelU >= 0 and pixelU <= imgWidth and pixelV >= 0 and pixelV < imgHeight :
                 
                 self.projectionX.append(pixelU)
-                self.projectionY.append(imgHeight - pixelV)
+                self.projectionY.append(imgHeight-pixelV)
 
         drawnow.drawnow(self.plotProjection)
 
 
     def plotProjection(self) :  
         
+        plt.plot(self.cam_point[0], imgHeight - self.cam_point[1], 'r.', markersize = 12)
         plt.plot(self.projectionX, self.projectionY, 'b.')
         plt.xlabel('pixel X')
         plt.ylabel('pixel Y')
+        plt.xlim([0, 640])
+        plt.ylim([0, 480])
         plt.grid(True)
+        plt.tick_params(axis = 'both', labelsize=7)
         
 
-
+# 이미지 픽셀 y 축의 정의와 matplotlib에서의 y 축의 정의가 다르니 주의
+# 코드 구현 계회 
+# 객체인식을 통해 인식된 객체 정보 받기 
+# - [A00000001, A00000002, A00000003]
+# 1. 받은 데이터 parsing
+# 2. parsing 결과에 따라 해당 객체 flag 저장하기
+# 3. A1 - A3 중 어떤게 ON 되는지 보기
+# 4. 그에 맞게 B1 ~ B3 표지판을 보고 해당하는 것에 대한 거리 탐지하고 멈추는 코드 구축
 
     
 if __name__ == "__main__" :
@@ -176,10 +190,16 @@ if __name__ == "__main__" :
     time_start = time.time()
     
     while (time_stime < time_final):
+    
+        loopStart = time.time()
                 
         sharedMem.Importdata()
         
         projection.projectPCD()
+        
+        loopEnd = time.time()
+        
+        # print(f"Loop freq : {round(1/(loopEnd - loopStart))} [HZ]")
         
         while(1):
             
@@ -196,3 +216,5 @@ if __name__ == "__main__" :
             
 
     sharedMem.sharedmemory_close()
+    
+    

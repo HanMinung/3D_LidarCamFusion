@@ -17,6 +17,7 @@ class POINT_CLOUD(ct.Structure):
 
 # POINT_CLOUD READ_DATA[12000]    
 class READ_DATA(ct.Array):
+    
     _length_ = 16000
     _type_ = POINT_CLOUD
     
@@ -110,8 +111,26 @@ class Projection :
     
     def __init__(self) :
         
-        self.projectionX    = []
-        self.projectionY    = []
+        self.projectionX  = []
+        self.projectionY  = []
+        
+        self.pixelU       = []
+        self.pixelV       = []
+        
+        self.dist         = 0
+        self.prev_dist    = 0
+        self.max_diff     = 1.5             # To prevent distance value fluctuation
+        
+        self.camMid       = []
+        self.pixel_diff   = []
+        self.pixel_select = []
+        
+        self.isStop       = False
+        self.velcmd       = 0
+        self.steer        = 0
+        self.brake        = 0
+        
+        self.cnt          = 0
 
         
     def writeCSV(self, filename = 'PCDdata.csv') :
@@ -126,10 +145,12 @@ class Projection :
                 writer.writerow([pointCloud[Idx].xCoordinate, pointCloud[Idx].yCoordinate, pointCloud[Idx].zCoordinate])
         
     
-    def projectPCD(self) :
+    def projectPCD(self) :       
         
-        self.projectionX = []
-        self.projectionY = []
+        self.pixel_diff   = []
+        self.pixelU       = []
+        self.pixelV       = []
+        self.pixel_select = []
         
         for Idx in range(nLidar) :
             
@@ -142,44 +163,122 @@ class Projection :
             scaleFac = pointY + camRecede
 
             worldCoor   = np.array([[pointX],[pointY],[pointZ],[1]])
-            pixelCoor   = 1/scaleFac * projectionMat @ worldCoor
+            pixelCoor   = 1/scaleFac * intMat @ extMat @ worldCoor
 
-            pixelU = int(pixelCoor[0])
-            pixelV = int(pixelCoor[1])
-
-            if pixelU >= 0 and pixelU <= imgWidth and pixelV >= 0 and pixelV < imgHeight :
+            self.pixelU.append(int(pixelCoor[0]))
+            self.pixelV.append(int(pixelCoor[1]))
+            
+            x_diff = abs(self.pixelU[Idx] - self.camMid[0]) 
+            y_diff = abs(self.pixelV[Idx] - self.camMid[1])
+            
+            self.pixel_diff.append(x_diff + y_diff)
+        
+        Index = np.argmin(self.pixel_diff)
+        
+        self.pixel_select.append(self.pixelU[Index])
+        self.pixel_select.append(self.pixelV[Index])
+        
+        self.dist = sqrt((pointCloud[Index].xCoordinate) **2 + (pointCloud[Index].yCoordinate) **2)
+        
+        # if self.cnt > 10 and abs(self.prev_dist - self.dist) > self.max_diff or self.camMid is None :
                 
-                self.projectionX.append(pixelU)
-                self.projectionY.append(imgHeight - pixelV)
+            # self.dist = self.prev_dist
+        
+        self.prev_dist = self.dist              # Update
+            
+        velocity, steer, brake = self.command_erp()
 
         drawnow.drawnow(self.plotProjection)
 
+        return velocity, steer, brake
 
-    def plotProjection(self) :
         
-        plt.plot(self.projectionX, self.projectionY, 'b.')
+
+
+    def recieveObject(self, shared_mem_name):
+        
+        self.camMid = []
+        
+        shm = shared_memory.SharedMemory(name = shared_mem_name)
+        shared_data = np.ndarray((9, ), dtype='int', buffer = shm.buf) 
+    
+        self.camMid.append(shared_data[1])
+        self.camMid.append(shared_data[2])
+
+
+    def command_erp(self) :
+        
+        if self.dist < 2.1 :
+            
+            self.isStop = True
+        
+        if self.isStop :
+            
+            self.velcmd = 0
+            self.steer  = 0
+            self.brake  = 15
+            
+        else : 
+            
+            self.velcmd = 10
+            self.steer  = 0
+            self.brake  = 0
+        
+        return self.velcmd, self.steer, self.brake
+
+
+
+    def printResult(self, loop_time) :
+        
+        self.cnt += 1
+        
+        if self.cnt%5 == 0 :
+            
+            print("------------------------------------------")
+            print(f"|       SIGN DIST  : {round(self.dist, 3)}   [m]   ")
+            print(f"|       LOOP TIME  : {round(loop_time, 3)}   [sec] ")
+            print("------------------------------------------\n")
+
+
+    def plotProjection(self) :  
+        
+        plt.plot(self.pixelU          , self.pixelV         , 'b.')
+        plt.plot(self.pixel_select[0] , self.pixel_select[1], 'r.', markersize = 20)
+        plt.plot(self.camMid[0]       , self.camMid[1]      , 'g.', markersize = 10)
         plt.xlabel('pixel X')
         plt.ylabel('pixel Y')
+        plt.xlim([0, 640])
+        plt.ylim([0, 480])
         plt.grid(True)
+        plt.tick_params(axis = 'both', labelsize = 7)
         
-
-
 
     
 if __name__ == "__main__" :
     
     sharedMem  = Velodyne_Sharedmemory()
     projection = Projection()
+    command    = erpSerial(device_name)
     
     sharedMem.Lidar_SMopen()
     
     time_start = time.time()
     
     while (time_stime < time_final):
+    
+        loopStart = time.time()
                 
         sharedMem.Importdata()
         
-        projection.projectPCD()
+        projection.recieveObject(shared_memory_name)
+        
+        velocity, steer, brake = projection.projectPCD()
+        
+        command.send_ctrl_cmd(int(velocity), int(0), int(brake))
+        
+        loopEnd = time.time()
+        
+        projection.printResult(loopEnd - loopStart)
         
         while(1):
             
