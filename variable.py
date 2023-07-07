@@ -66,18 +66,19 @@ R2D            = 180/pi
     3. CABLIRATION VARIABLE
 """
 
-Alpha          = 87  * D2R
-Beta           = 0.8 * D2R
-Gamma          = 0   * D2R
+Alpha          = 86   * D2R
+Beta           = 0    * D2R
+Gamma          = 0    * D2R
 
-nLidar         = 16000
+nLidar         = 12000
 camHeight      = 0.33
-camRecede      = 0.27
+camRecede      = 0.26
+real_recede    = camRecede * cos(Beta)
 focalLen       = 0.00367
 imgWidth       = 640
 imgHeight      = 480
 fovX           = 61.92   *  D2R
-fovY           = 54.1432 *  D2R
+fovY           = 58.1432 *  D2R
 
 
 ox             = imgWidth/2                                              
@@ -103,9 +104,9 @@ rotZ = np.array([[np.cos(Gamma)      ,   -np.sin(Gamma)  ,    0 ],
 rotMat   = rotZ @ rotY @ rotX
 
 
-transMat = np.array([[      0       ],
-                     [   camHeight  ],
-                     [   camRecede  ]])
+transMat = np.array([[       0        ],
+                     [   camHeight    ],
+                     [   real_recede  ]])
 
         
 extMat = np.hstack((rotMat, transMat))
@@ -120,15 +121,24 @@ intMat = np.array([[ focalLen/sx    ,        0      ,    ox ],
     4. SHARED MEMORY VARIABLE
 """
 
-shared_memory_name = "HADA3_CAM"
+shared_memory_receive = "HADA3_CAM_DETECT"
+shared_memory_send    = "HADA3_ERP_STOP"
 
+send_mem_size         = 4 * 1
 
 """
     5. COMMAND VARIABLE
 """
 device_name = 'com3'
-brake       = 0 
 
+brake       = 0 
+vel_cmd     = 10
+
+
+"""
+    6. DELIVERY VARIABLE
+"""
+dist_thresh = 2.5
 
 
 

@@ -6,7 +6,7 @@ def mouse_callback(event, x, y, flags, param):
 
 def main():
 
-    cap = cv.VideoCapture(cv.CAP_DSHOW+1)
+    cap = cv.VideoCapture(cv.CAP_DSHOW)
 
     cap.set(cv.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)
@@ -22,7 +22,6 @@ def main():
             break
 
         cv.imshow("Camera", frame)
-
 
         if cv.waitKey(1) & 0xFF == ord('q'):
             break

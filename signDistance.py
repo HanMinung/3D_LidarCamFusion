@@ -18,7 +18,7 @@ class POINT_CLOUD(ct.Structure):
 # POINT_CLOUD READ_DATA[12000]    
 class READ_DATA(ct.Array):
     
-    _length_ = 16000
+    _length_ = 12000
     _type_ = POINT_CLOUD
     
 
@@ -117,19 +117,18 @@ class Projection :
         self.pixelU       = []
         self.pixelV       = []
         
-        self.dist         = 0
-        self.prev_dist    = 0
-        self.max_diff     = 1.5             # To prevent distance value fluctuation
+        self.dist         = 1000
+        self.prev_dist    = 1000
         
         self.camMid       = []
         self.pixel_diff   = []
         self.pixel_select = []
         
-        self.isStop       = False
-        self.velcmd       = 0
+        self.isStop       = 0
         self.steer        = 0
         self.brake        = 0
         
+        self.restart      = 0
         self.cnt          = 0
 
         
@@ -145,6 +144,7 @@ class Projection :
                 writer.writerow([pointCloud[Idx].xCoordinate, pointCloud[Idx].yCoordinate, pointCloud[Idx].zCoordinate])
         
     
+    
     def projectPCD(self) :       
         
         self.pixel_diff   = []
@@ -152,80 +152,118 @@ class Projection :
         self.pixelV       = []
         self.pixel_select = []
         
-        for Idx in range(nLidar) :
-            
-            if pointCloud[Idx].xCoordinate == 0 and pointCloud[Idx].yCoordinate == 0 and pointCloud[Idx].zCoordinate : break
-
-            pointX = pointCloud[Idx].xCoordinate
-            pointY = pointCloud[Idx].yCoordinate
-            pointZ = pointCloud[Idx].zCoordinate
-            
-            scaleFac = pointY + camRecede
-
-            worldCoor   = np.array([[pointX],[pointY],[pointZ],[1]])
-            pixelCoor   = 1/scaleFac * intMat @ extMat @ worldCoor
-
-            self.pixelU.append(int(pixelCoor[0]))
-            self.pixelV.append(int(pixelCoor[1]))
-            
-            x_diff = abs(self.pixelU[Idx] - self.camMid[0]) 
-            y_diff = abs(self.pixelV[Idx] - self.camMid[1])
-            
-            self.pixel_diff.append(x_diff + y_diff)
+        if self.camMid[1] != 0 :
         
-        Index = np.argmin(self.pixel_diff)
-        
-        self.pixel_select.append(self.pixelU[Index])
-        self.pixel_select.append(self.pixelV[Index])
-        
-        self.dist = sqrt((pointCloud[Index].xCoordinate) **2 + (pointCloud[Index].yCoordinate) **2)
-        
-        # if self.cnt > 10 and abs(self.prev_dist - self.dist) > self.max_diff or self.camMid is None :
+            for Idx in range(nLidar) :
                 
-            # self.dist = self.prev_dist
-        
-        self.prev_dist = self.dist              # Update
+                if pointCloud[Idx].xCoordinate == 0 and pointCloud[Idx].yCoordinate == 0 and pointCloud[Idx].zCoordinate : break
+
+                pointX = pointCloud[Idx].xCoordinate
+                pointY = pointCloud[Idx].yCoordinate
+                pointZ = pointCloud[Idx].zCoordinate
+                
+                scaleFac = pointY + camRecede
+
+                worldCoor   = np.array([[pointX],[pointY],[pointZ],[1]])
+                pixelCoor   = 1/scaleFac * intMat @ extMat @ worldCoor
+
+                self.pixelU.append(int(pixelCoor[0]))
+                self.pixelV.append(int(pixelCoor[1]))
+                
+                x_diff = abs(self.pixelU[Idx] - self.camMid[0]) 
+                y_diff = abs(self.pixelV[Idx] - self.camMid[1])
+                
+                self.pixel_diff.append(x_diff + y_diff)
+            
+            Index = np.argmin(self.pixel_diff)
+            
+            self.pixel_select.append(self.pixelU[Index])
+            self.pixel_select.append(self.pixelV[Index])
+            
+            self.dist = sqrt((pointCloud[Index].xCoordinate) **2 + (pointCloud[Index].yCoordinate) **2)
+            
+            self.prev_dist = self.dist              # Update
+            
+            
+        else : self.dist = self.prev_dist
             
         velocity, steer, brake = self.command_erp()
 
-        drawnow.drawnow(self.plotProjection)
+        # drawnow.drawnow(self.plotProjection)
 
         return velocity, steer, brake
 
         
+    def receiveObject(self, shared_mem_name):
+        
+        try :
+            
+            self.camMid = []
+            
+            shm = shared_memory.SharedMemory(name = shared_mem_name)
+            shared_data = np.ndarray((9, ), dtype ='int', buffer = shm.buf) 
+            
+            self.camMid.append(shared_data[1])
+            self.camMid.append(shared_data[2])
+            
+        except FileNotFoundError :
+            
+            print("cannot read camera shared memory data...!")
 
 
-    def recieveObject(self, shared_mem_name):
+    def sendtoCam(self, shared_mem_name) :
         
-        self.camMid = []
+        try :
+            
+            shm = shared_memory.SharedMemory(name = shared_mem_name)
+            shared_data = np.ndarray((1,), dtype ='int', buffer = shm.buf)
+
+            shared_data[0] = self.isStop
         
-        shm = shared_memory.SharedMemory(name = shared_mem_name)
-        shared_data = np.ndarray((9, ), dtype='int', buffer = shm.buf) 
-    
-        self.camMid.append(shared_data[1])
-        self.camMid.append(shared_data[2])
+        except FileNotFoundError :
+            
+            print("cannot send stop flag to camera process...!")
+        
 
 
     def command_erp(self) :
         
-        if self.dist < 2.1 :
+        if self.dist < dist_thresh :
             
-            self.isStop = True
+            self.isStop = 1
+        
+        self.check_condition()
+            
+        return self.velcmd, self.steer, self.brake
+
+
+
+    def check_condition(self) :
         
         if self.isStop :
             
+            self.brake  = 200
             self.velcmd = 0
             self.steer  = 0
-            self.brake  = 15
             
+            self.check_restart()
+        
         else : 
             
-            self.velcmd = 10
-            self.steer  = 0
             self.brake  = 0
-        
-        return self.velcmd, self.steer, self.brake
+            self.velcmd = vel_cmd
+            self.steer  = 0
 
+
+
+    def check_restart(self) :
+        
+        self.restart += 1
+            
+        if(self.restart == 50) :                    # 정차 후 5초 후에 다시 출발
+                
+            self.isStop, self.restart = 0, 0
+            self.dist, self.prev_dist = 1000, 1000
 
 
     def printResult(self, loop_time) :
@@ -234,17 +272,21 @@ class Projection :
         
         if self.cnt%5 == 0 :
             
-            print("------------------------------------------")
-            print(f"|       SIGN DIST  : {round(self.dist, 3)}   [m]   ")
-            print(f"|       LOOP TIME  : {round(loop_time, 3)}   [sec] ")
-            print("------------------------------------------\n")
+            print("--------------------------------------------------")
+            print(f"|       SIGN DIST     : {round(self.dist      , 2)}   [m]   ")
+            # print(f"|       PREV DIST     : {round(self.prev_dist , 2)}   [m]   ")
+            print(f"|       LOOP TIME     : {round(loop_time      , 2)}   [sec] ")
+            print(f"|       IS STOP(1/0)  : {self.isStop}")
+            print(f"|       RESTART FLAG  : {self.restart}")
+            print(f"|       VELOCITY      : {self.velcmd}")
+            print("--------------------------------------------------\n")
 
 
     def plotProjection(self) :  
         
         plt.plot(self.pixelU          , self.pixelV         , 'b.')
         plt.plot(self.pixel_select[0] , self.pixel_select[1], 'r.', markersize = 20)
-        plt.plot(self.camMid[0]       , self.camMid[1]      , 'g.', markersize = 10)
+        # plt.plot(self.camMid[0]       , self.camMid[1]      , 'g.', markersize = 10)
         plt.xlabel('pixel X')
         plt.ylabel('pixel Y')
         plt.xlim([0, 640])
@@ -261,6 +303,9 @@ if __name__ == "__main__" :
     command    = erpSerial(device_name)
     
     sharedMem.Lidar_SMopen()
+    shm = shared_memory.SharedMemory(name = shared_memory_send, create = True, size = send_mem_size)
+    
+    print("Shared memory with camera is opened ...!")
     
     time_start = time.time()
     
@@ -270,11 +315,13 @@ if __name__ == "__main__" :
                 
         sharedMem.Importdata()
         
-        projection.recieveObject(shared_memory_name)
+        projection.receiveObject(shared_memory_receive)
         
         velocity, steer, brake = projection.projectPCD()
         
-        command.send_ctrl_cmd(int(velocity), int(0), int(brake))
+        projection.sendtoCam(shared_memory_send)
+        
+        command.send_ctrl_cmd(int(velocity), int(steer), int(brake))
         
         loopEnd = time.time()
         
@@ -295,3 +342,4 @@ if __name__ == "__main__" :
             
 
     sharedMem.sharedmemory_close()
+    shm.close()
